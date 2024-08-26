@@ -1,3 +1,5 @@
+import { Transport } from "@nestjs/microservices";
+
 export default () => ({
   port: parseInt(process.env.PORT, 10) || 3000,
   mongoDb: {
@@ -20,10 +22,11 @@ export default () => ({
   auth: {
     maxLoggedInDevices: parseInt(process.env.MAX_LOGGED_IN_DEVICES, 10) || 1,
   },
-  communicationService: {
-    url: process.env.COMMUNICATION_SERVICE_URL,
-  },
-  userService: {
-    url: process.env.USER_SERVICE_URL,
+  messagingService: {
+    options: {
+      host: process.env.MESSAGING_SERVICE_HOST,
+      port: process.env.MESSAGING_SERVICE_PORT,
+    },
+    transport: Transport.TCP,
   },
 });

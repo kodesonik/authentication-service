@@ -1,5 +1,5 @@
 # Étape de construction pour le développement
-FROM node:20-alpine AS development
+FROM node:20 AS development
 
 # Définir le répertoire de travail dans le conteneur
 WORKDIR /usr/src/app
@@ -11,7 +11,7 @@ COPY tsconfig* ./
 COPY nest-cli.json ./
 
 # Installer les dépendances, y compris les dépendances de développement
-# RUN npm install
+RUN npm install
 
 # Copier le reste des fichiers de l'application
 # COPY . ./

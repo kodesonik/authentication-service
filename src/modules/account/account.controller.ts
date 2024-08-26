@@ -190,12 +190,12 @@ export class AccountController {
 
   @Post('check-username')
   checkUsername(@Body() createAccountDto: CreateAccountDto) {
-    return this.accountService.create(createAccountDto);
+    // return this.accountService.create(createAccountDto);
   }
 
   @Post('')
   signup(@Body() createAccountDto: CreateAccountDto) {
-    return this.accountService.create(createAccountDto);
+    // return this.accountService.create(createAccountDto);
   }
 
   @Get()
@@ -210,22 +210,22 @@ export class AccountController {
 
   @Post('login')
   login(@Body() createAccountDto: CreateAccountDto) {
-    return this.accountService.create(createAccountDto);
+    // return this.accountService.create(createAccountDto);
   }
 
   @Post('forgot-password')
   forgotPassword(@Body() createAccountDto: CreateAccountDto) {
-    return this.accountService.create(createAccountDto);
+    // return this.accountService.create(createAccountDto);
   }
 
   @Post('reset-password')
   resetPassword(@Body() createAccountDto: CreateAccountDto) {
-    return this.accountService.create(createAccountDto);
+    // return this.accountService.create(createAccountDto);
   }
 
   @Post('change-password')
   changePassword(@Body() createAccountDto: CreateAccountDto) {
-    return this.accountService.create(createAccountDto);
+    // return this.accountService.create(createAccountDto);
   }
 
   @Patch(':id')

@@ -10,17 +10,29 @@ export type AccountDocument = HydratedDocument<IAccount>;
   versionKey: false,
 })
 export class Account implements Omit<IAccount, 'id'> {
+  @Prop()
+  lastname: string;
+
+  @Prop()
+  firstname: string;
+
   @Prop({ required: true, unique: true, lowercase: true })
   username: string;
 
   @Prop()
-  phoneNumber: number;
+  phone: number;
 
   @Prop()
   email: string;
 
   @Prop()
   avatar: string;
+
+  @Prop()
+  birthdate: Date;
+
+  @Prop()
+  address: string;
 
   @Prop({ default: Role.USER })
   role: string;
@@ -31,9 +43,7 @@ export class Account implements Omit<IAccount, 'id'> {
   @Prop()
   authMethods: AuthMethod[];
 
-  @Prop({
-    select: false,
-  })
+  @Prop()
   password: string;
 
   @Prop({ default: true })
@@ -41,14 +51,6 @@ export class Account implements Omit<IAccount, 'id'> {
 
   @Prop()
   lastLogin: Date;
-  @Prop()
-  ownerId: string;
-
-  @Prop()
-  guests: string[];
-
-  @Prop()
-  firebaseUid: string;
 }
 
 export const AccountSchema = SchemaFactory.createForClass(Account);

@@ -6,8 +6,9 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
-  NotFoundException,
+  // NotFoundException,
 } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { CreateAccountDto } from './dto/create-account.dto';
 import { UpdateAccountDto } from './dto/update-account.dto';
 import { InjectModel } from '@nestjs/mongoose';
@@ -18,6 +19,9 @@ import { JwtService } from '@nestjs/jwt';
 import { IDevice } from 'src/models/device';
 import { ConfigService } from '@nestjs/config';
 import { AuthMethod } from 'src/models';
+import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
+import { ClientProxy } from '@nestjs/microservices';
 
 @Injectable()
 export class AccountService {
@@ -25,9 +29,9 @@ export class AccountService {
     @InjectModel(Account.name) private readonly accountModel: Model<Account>,
     @InjectModel(Device.name) private readonly deviceModel: Model<Device>,
     private readonly redisService: RedisService,
-    @Inject('COMMUNICATION_SERVICE')
-    private readonly communicationService: any,
-    @Inject('USER_SERVICE') private readonly userService: any,
+    @Inject('MESSAGING_SERVICE')
+    private readonly messagingService: ClientProxy,
+    // @Inject('USER_SERVICE') private readonly userService: any,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {}
@@ -35,6 +39,163 @@ export class AccountService {
   private isEmail(key: string) {
     return key.includes('@');
   }
+
+  private async hashPassword(password: string): Promise<string> {
+    return await bcrypt.hash(password, 10);
+  }
+
+  async isEmailUnique(email: string): Promise<boolean> {
+    //Check if the user email provide is unique
+    const response = await this.accountModel.findOne({ email });
+    // Logger.log(response, 'isEmailUnique');
+    return !response;
+  }
+
+  async isUsernameUnique(username: string): Promise<boolean> {
+    //Check if the username provide is unique
+    const response = await this.accountModel.findOne({ username });
+
+    return !response;
+  }
+
+  async isPhoneUnique(phone: string): Promise<boolean> {
+    //Check if the user phone provide is unique
+    const response = await this.accountModel.findOne({ phone });
+
+    return !response;
+  }
+
+  async decodeToken(token: string) {
+    try {
+      const decripted = this.jwtService.verify(token);
+      if (!decripted) throw new BadRequestException('invalid token');
+      const account = await this.accountModel.findById(decripted.id);
+      if (!account) throw new BadRequestException('account not found');
+      // if (!account.isActive)
+      //   throw new BadRequestException('account not active');
+      return account.toObject();
+    } catch (error) {
+      Logger.error(error.message, 'DecodeToken');
+      return { error: error.message, status: error.status };
+    }
+  }
+
+  //register
+  async register(registerDto: RegisterDto) {
+    try {
+      //Check if the user email provide is unique
+      const isEmailUnique = await this.isEmailUnique(registerDto.email);
+      if (!isEmailUnique) {
+        throw new BadRequestException('Email already exist');
+      }
+
+      //Check if the username provide is unique
+      const isUsernameUnique = await this.isUsernameUnique(
+        registerDto.username,
+      );
+      if (!isUsernameUnique) {
+        throw new BadRequestException('Username already exist');
+      }
+
+      //Check if the user phone provide is unique
+      const isPhoneUnique = await this.isPhoneUnique(registerDto.phone);
+      if (!isPhoneUnique) {
+        throw new BadRequestException('Phone already exist');
+      }
+
+      // hash password
+      Logger.log(registerDto);
+      registerDto.password = await this.hashPassword(registerDto.password);
+
+      // save user in database
+      const account = await this.accountModel.create({
+        ...registerDto,
+        isActive: true,
+      });
+      Logger.log(account);
+
+      // generate tokens
+      const { _id, ...rest } = account.toObject();
+      const access_token = await this.jwtService.signAsync(
+        { id: _id, ...rest },
+        {
+          expiresIn: '10m',
+        },
+      );
+      const refresh_token = await this.jwtService.signAsync(
+        { id: _id, ...rest },
+        {
+          expiresIn: '1y',
+        },
+      );
+
+      // save tokens in redis
+      this.redisService.set(access_token, account._id.toString(), 10);
+      this.redisService.set(refresh_token, account._id.toString(), 525600);
+
+      // generate otp 6 digit
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      // // save otp in redis
+      this.redisService.set(registerDto.email, otp, 10);
+
+      this.messagingService.send(
+        { cmd: 'send-mail-otp' },
+        {
+          to: registerDto.email,
+          otp,
+        },
+      );
+      // message: `otp sent to ${registerDto.email}`
+      return {
+        access_token,
+        refresh_token,
+        account: rest,
+        message: `otp sent to ${registerDto.email}`,
+      };
+    } catch (error) {
+      Logger.error(error.message, 'Register');
+      return { error: error.message, status: error.status };
+    }
+  }
+
+  //login
+  async login(loginDto: LoginDto) {
+    try {
+      // find account with username or email
+      const account = await this.accountModel.findOne({
+        $or: [{ email: loginDto.username }, { username: loginDto.username }],
+      });
+      if (!account) throw new BadRequestException('account not found');
+      if (!account.isActive)
+        throw new BadRequestException('account not active');
+      // compare password
+      const isValid = await bcrypt.compare(loginDto.password, account.password);
+      if (!isValid) throw new BadRequestException('invalid password');
+      // generate tokens
+      const { _id, ...rest } = account.toObject();
+      const access_token = await this.jwtService.signAsync(
+        { id: _id, ...rest },
+        {
+          expiresIn: '10m',
+        },
+      );
+      const refresh_token = await this.jwtService.signAsync(
+        { id: _id, ...rest },
+        {
+          expiresIn: '1y',
+        },
+      );
+      // save tokens in redis
+      this.redisService.set(access_token, account._id.toString(), 10);
+      this.redisService.set(refresh_token, account._id.toString(), 525600);
+      return { access_token, refresh_token, account: rest };
+    } catch (error) {
+      Logger.error(error.message, 'Login');
+      return { error: error.message, status: error.status };
+    }
+  }
+
+  //old endopoints
 
   async sendOtp(credential: string, resend: boolean) {
     try {
@@ -49,10 +210,13 @@ export class AccountService {
         ? 'mail'
         : 'whatsapp';
       mode = mode === 'whatsapp' && resend ? 'sms' : mode;
-      await this.communicationService.send(`${mode}/otp`, {
-        to: credential,
-        otp,
-      });
+      await this.messagingService.send(
+        { cmd: `send-${mode}/otp` },
+        {
+          to: credential,
+          otp,
+        },
+      );
       // console.log('res', res);
       return { message: `otp sent to ${credential} via ${mode}.` };
     } catch (error) {
@@ -87,13 +251,13 @@ export class AccountService {
         dts['phoneNumber'] = credential;
         dts['authMethods'].push('phone');
       }
-      const { doc } = await this.userService.get(
-        `user/credential/${credential}`,
-        {},
-      );
+      // const { doc } = await this.userService.get(
+      //   `user/credential/${credential}`,
+      //   {},
+      // );
       // Logger.log(doc);
-      dts['ownerId'] = doc?._id || null;
-      dts['firebaseUid'] = doc?.firebaseUid || null;
+      // dts['ownerId'] = doc?._id || null;
+      // dts['firebaseUid'] = doc?.firebaseUid || null;
       account = await this.accountModel.create(dts);
     }
 
@@ -161,13 +325,13 @@ export class AccountService {
 
   async refreshToken(refresh_token: string) {
     // Check if refresh token exist
-    const deviceId = await this.redisService.get(refresh_token);
+    // const deviceId = await this.redisService.get(refresh_token);
 
     // Check if device is active
-    if (!deviceId) throw new ForbiddenException('invalid refresh token');
-    const device = await this.deviceModel.findOne({ id: deviceId });
-    if (!device) throw new ForbiddenException('device not found');
-    if (!device.isActive) throw new ForbiddenException('device not active');
+    // if (!deviceId) throw new ForbiddenException('invalid refresh token');
+    // const device = await this.deviceModel.findOne({ id: deviceId });
+    // if (!device) throw new ForbiddenException('device not found');
+    // if (!device.isActive) throw new ForbiddenException('device not active');
 
     // Check if account is active
     const decripted = this.jwtService.verify(refresh_token);
@@ -186,7 +350,7 @@ export class AccountService {
     );
 
     // save access token in redis
-    this.redisService.set(access_token, deviceId, 10);
+    this.redisService.set(access_token, _id.toString(), 10);
     return {
       access_token,
       refresh_token,
@@ -196,38 +360,38 @@ export class AccountService {
   }
 
   async getProfile(id: string) {
-    const account = await this.accountModel.findById(id);
+    const account = await this.accountModel.findById(id).select('-password');
     if (!account) throw new BadRequestException('account not found');
     if (!account.isActive) throw new BadRequestException('account not active');
-    if (!account.ownerId)
-      throw new NotFoundException('Please complete your profile');
-    const { data } = await this.userService.get(`user/${account.ownerId}/`, {});
-    console.log(data);
-    return data;
+    // if (!account.ownerId)
+    // throw new NotFoundException('Please complete your profile');
+    // const { data } = await this.userService.get(`user/${account.ownerId}/`, {});
+    console.log(account);
+    return { ...account.toObject(), id: account._id };
   }
 
   async completeProfile(id: string, createAccountDto: any) {
     const account = await this.accountModel.findById(id);
     if (!account) throw new BadRequestException('account not found');
     if (!account.isActive) throw new BadRequestException('account not active');
-    if (account.ownerId)
-      throw new BadRequestException('profile already completed');
+    // if (account.ownerId)
+    //   throw new BadRequestException('profile already completed');
     if (createAccountDto.birthDate)
       createAccountDto.birthDate = new Date(createAccountDto.birthDate);
-    const { status, doc } = await this.userService.send(`user`, {
-      userName: createAccountDto.username,
-      email: createAccountDto.email,
-      phoneNumber: createAccountDto.phoneNumber,
-      birthDate: createAccountDto.birthdate,
-      firstName: createAccountDto.firstname,
-      gender: createAccountDto.gender,
-    });
+    // const { status, doc } = await this.userService.send(`user`, {
+    //   userName: createAccountDto.username,
+    //   email: createAccountDto.email,
+    //   phoneNumber: createAccountDto.phoneNumber,
+    //   birthDate: createAccountDto.birthdate,
+    //   firstName: createAccountDto.firstname,
+    //   gender: createAccountDto.gender,
+    // });
     // Logger.log(doc);
-    if (status !== 'success')
-      throw new InternalServerErrorException('user not created');
-    const user = doc;
+    // if (status !== 'success')
+    // throw new InternalServerErrorException('user not created');
+    // const user = doc;
     const updateAccountDto = {
-      ownerId: user._id,
+      // ownerId: user._id,
     };
 
     if (
@@ -246,12 +410,9 @@ export class AccountService {
       updateAccountDto['username'] = createAccountDto.username;
 
     await account.updateOne(updateAccountDto);
-    return { message: 'profile completed', user };
+    return { message: 'profile completed' };
   }
 
-  create(createAccountDto: CreateAccountDto) {
-    return 'This action adds a new account';
-  }
 
   findAll() {
     return `This action returns all account`;
